@@ -1,5 +1,3 @@
-# cs128honors
-
 # CLI Password Manager
 
 ## Group Name
