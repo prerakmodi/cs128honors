@@ -7,9 +7,13 @@ RustyVault
 
 ## Group Members
 Prerak Modi (pmodi26)
+
 Suren Anbarchian (surensa2)
+
 Rohan Hejmadi (hejmadi2)
+
 Tanay Adbe (tadbe2)
+
 
 ## Project Introduction
 Our project is a **Command Line Interface (CLI) Password Manager** built in Rust. Our password manager tool will allow users to securely store, retrieve, and manage their passwords from a terminal. The main objective of our project is to design a password manager that is both lightweight and secure without using a graphical interface. Our password manager allows users to securely add, view, delete, and search for stored passwords using a terminal. We have selected this project for a variety of reasons. Our project allows us to work with all aspects of computer systems, such as security, systems programming, and real-world usability. Our project also allows us to utilize the feature of rust.
@@ -63,7 +67,7 @@ The CLI Password Manager will consist of several core components:
 - Search functionality
  
 ## Possible Challenges
-Lrning and correctly implementing encryption libraries
+Learning and correctly implementing encryption libraries
 Managing file I/O safely without corrupting stored data
 Handling Rust’s ownership and borrowing rules, especially with mutable data
 Designing a clean and user-friendly CLI interface
@@ -71,7 +75,12 @@ Debugging serialization/deserialization issues with 'serde'
 
 ## References
 Rust Documentation: https://doc.rust-lang.org/
+
 `clap` crate for CLI parsing: https://docs.rs/clap/
+
 `serde` for serialization: https://serde.rs/
+
 Rust Crypto libraries (`ring`, `aes`)
+
 Inspiration from existing password managers like Bitwarden and LastPass
+
