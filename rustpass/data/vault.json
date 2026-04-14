@@ -1,3 +1,14 @@
 {
-  "entries": {}
+  "entries": {
+    "amazon": {
+      "service": "amazon",
+      "username": "myuser",
+      "password": "abcd"
+    },
+    "github": {
+      "service": "github",
+      "username": "myuser",
+      "password": "abcd"
+    }
+  }
 }

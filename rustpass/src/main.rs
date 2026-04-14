@@ -1,3 +1,4 @@
+// Import Statements
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -49,7 +50,7 @@ enum Commands {
     },
 }
 
-
+// Get path to vault file (data/vault.json)
 fn vault_path() -> PathBuf {
     let mut path = std::env::current_dir().expect("Cannot determine current directory");
     path.push("data");
@@ -58,6 +59,7 @@ fn vault_path() -> PathBuf {
     path
 }
 
+// Load vault from file or return empty vault
 fn load_vault(path: &PathBuf) -> Vault {
     match fs::read_to_string(path) {
         Ok(contents) => serde_json::from_str(&contents).unwrap_or_else(|e| {
@@ -68,12 +70,13 @@ fn load_vault(path: &PathBuf) -> Vault {
     }
 }
 
+// Save vault data to file
 fn save_vault(path: &PathBuf, vault: &Vault) {
     let json = serde_json::to_string_pretty(vault).expect("Failed to serialize vault");
     fs::write(path, json).expect("Failed to write vault file");
 }
 
-
+// Get path to master password file (.master)
 fn master_path() -> PathBuf {
     let mut path = std::env::current_dir().expect("Cannot determine current directory");
     path.push("data");
@@ -82,6 +85,7 @@ fn master_path() -> PathBuf {
     path
 }
 
+// Prompt user to enter a password
 fn prompt_password(prompt: &str) -> String {
     print!("{}", prompt);
     io::stdout().flush().expect("Failed to flush stdout");
@@ -90,6 +94,7 @@ fn prompt_password(prompt: &str) -> String {
     input.trim_end_matches(|c| c == '\n' || c == '\r').to_string()
 }
 
+// Setup or verify master password
 fn authenticate() -> bool {
     let mp = master_path();
 
@@ -130,7 +135,7 @@ fn authenticate() -> bool {
 }
 
 
-
+// Add or update a credential entry
 fn cmd_add(vault: &mut Vault, service: &str, username: &str) {
     let password = prompt_password(&format!("Password for '{service}': "));
     if password.is_empty() {
@@ -148,12 +153,13 @@ fn cmd_add(vault: &mut Vault, service: &str, username: &str) {
     vault.entries.insert(service.to_string(), entry);
 
     if existed {
-        println!("✓ Entry for '{service}' updated.");
+        println!("Entry for '{service}' updated.");
     } else {
-        println!("✓ Entry for '{service}' added.");
+        println!("Entry for '{service}' added.");
     }
 }
 
+// Retrieve and display a credential
 fn cmd_get(vault: &Vault, service: &str) {
     match vault.entries.get(service) {
         Some(entry) => {
@@ -167,14 +173,16 @@ fn cmd_get(vault: &Vault, service: &str) {
     }
 }
 
+// Delete a credential entry
 fn cmd_delete(vault: &mut Vault, service: &str) {
     if vault.entries.remove(service).is_some() {
-        println!("✓ Entry for '{service}' deleted.");
+        println!("Entry for '{service}' deleted.");
     } else {
         eprintln!("No entry found for '{service}'.");
     }
 }
 
+// List all stored services
 fn cmd_list(vault: &Vault) {
     if vault.entries.is_empty() {
         println!("No entries stored yet. Use `rustpass add` to get started.");
@@ -186,11 +194,12 @@ fn cmd_list(vault: &Vault) {
     services.sort();
     for s in services {
         let e = &vault.entries[s];
-        println!("  • {s}  (user: {})", e.username);
+        println!("  {s}  (user: {})", e.username);
     }
     println!("──────────────────────────────");
 }
 
+// Search for services by name
 fn cmd_search(vault: &Vault, query: &str) {
     let query_lower = query.to_lowercase();
     let matches: Vec<&Entry> = vault
@@ -208,12 +217,12 @@ fn cmd_search(vault: &Vault, query: &str) {
     let mut sorted = matches;
     sorted.sort_by(|a, b| a.service.cmp(&b.service));
     for e in sorted {
-        println!("  • {}  (user: {})", e.service, e.username);
+        println!("  {}  (user: {})", e.service, e.username);
     }
     println!("──────────────────────────────");
 }
 
-
+// Main entry point: parse CLI, authenticate, run command
 fn main() {
     let cli = Cli::parse();
 
