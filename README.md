@@ -14,7 +14,7 @@ Tanay Adbe (tadbe2)
 
 
 ## Project Introduction
-Our project is a **Command Line Interface (CLI) Password Manager** built in Rust. Our password manager tool will allow users to securely store, retrieve, and manage their passwords from a terminal. The main objective of our project is to design a password manager that is both lightweight and secure without using a graphical interface. Our password manager allows users to securely add, view, delete, and search for stored passwords using a terminal. We have selected this project for a variety of reasons. Our project allows us to work with all aspects of computer systems, such as security, systems programming, and real-world usability. Our project also allows us to utilize the feature of rust.
+Our project is a **Command Line Interface (CLI) Password Manager** built in Rust. Our password manager tool will allow users to securely store, retrieve, and manage their passwords from a terminal. The main objective of our project is to design a password manager that is both lightweight and secure without using a graphical interface. Our password manager allows users to securely add, view, delete, and search for stored passwords using a terminal. We have selected this project for a variety of reasons. Our project allows us to work with all aspects of computer systems, such as security, systems programming, and real-world usability. Our project also allows us to utilize the feature of Rust.
 
 ## Technical Overview
 The CLI Password Manager will consist of several core components:
