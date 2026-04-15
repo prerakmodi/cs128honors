@@ -264,7 +264,7 @@ mod tests {
     use std::path::PathBuf;
     use std::fs;
 
-    // ── helpers ──────────────────────────────────────────────────────────────
+    // Helpers
 
     fn temp_path(filename: &str) -> PathBuf {
         let mut p = std::env::temp_dir();
@@ -286,7 +286,7 @@ mod tests {
         String::from_utf8(buf).unwrap()
     }
 
-    // ── load_vault ───────────────────────────────────────────────────────────
+    // load_vault tests
 
     #[test]
     fn load_vault_nonexistent_file_returns_empty() {
@@ -333,7 +333,7 @@ mod tests {
         fs::remove_file(&path).ok();
     }
 
-    // ── save_vault ───────────────────────────────────────────────────────────
+    // save_vault tests
 
     #[test]
     fn save_vault_creates_valid_json_file() {
@@ -381,7 +381,7 @@ mod tests {
         fs::remove_file(&path).ok();
     }
 
-    // ── add_entry ────────────────────────────────────────────────────────────
+    // add_entry tests
 
     #[test]
     fn add_entry_new_returns_true_and_inserts() {
@@ -427,7 +427,7 @@ mod tests {
         assert_eq!(vault.entries.len(), 2);
     }
 
-    // ── cmd_get ──────────────────────────────────────────────────────────────
+    // cmd_get tests
 
     #[test]
     fn cmd_get_existing_entry_prints_all_fields() {
@@ -454,7 +454,7 @@ mod tests {
         assert_eq!(vault.entries.len(), count_before);
     }
 
-    // ── cmd_delete ───────────────────────────────────────────────────────────
+    // cmd_delete tests
 
     #[test]
     fn cmd_delete_existing_entry_removes_it() {
@@ -496,7 +496,7 @@ mod tests {
         assert!(vault.entries.is_empty());
     }
 
-    // ── cmd_list ─────────────────────────────────────────────────────────────
+    // cmd_list tests
 
     #[test]
     fn cmd_list_empty_vault_prints_empty_message() {
@@ -550,7 +550,7 @@ mod tests {
         assert!(!out.contains("supersecret"));
     }
 
-    // ── cmd_search ───────────────────────────────────────────────────────────
+    // cmd_search tests
 
     #[test]
     fn cmd_search_exact_match_found() {
