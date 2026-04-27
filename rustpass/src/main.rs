@@ -1,5 +1,14 @@
-// Import Statements
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce,
+};
+use argon2::{
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    Argon2,
+};
+use base64::{engine::general_purpose, Engine as _};
 use clap::{Parser, Subcommand};
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -16,6 +25,13 @@ struct Entry {
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct Vault {
     entries: HashMap<String, Entry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct EncryptedVault {
+    salt: String,
+    nonce: String,
+    ciphertext: String,
 }
 
 
@@ -59,21 +75,60 @@ fn vault_path() -> PathBuf {
     path
 }
 
-// Load vault from file or return empty vault
-fn load_vault(path: &PathBuf) -> Vault {
-    match fs::read_to_string(path) {
-        Ok(contents) => serde_json::from_str(&contents).unwrap_or_else(|e| {
-            eprintln!("Warning: vault file is corrupt ({e}). Starting fresh.");
-            Vault::default()
-        }),
-        Err(_) => Vault::default(),
-    }
+// Logic moved into main for easier password access
+fn decrypt_vault(encrypted: &EncryptedVault, password: &str) -> Result<Vault, String> {
+    let salt_bytes = general_purpose::STANDARD
+        .decode(&encrypted.salt)
+        .map_err(|_| "Failed to decode salt")?;
+    let nonce_bytes = general_purpose::STANDARD
+        .decode(&encrypted.nonce)
+        .map_err(|_| "Failed to decode nonce")?;
+    let ciphertext = general_purpose::STANDARD
+        .decode(&encrypted.ciphertext)
+        .map_err(|_| "Failed to decode ciphertext")?;
+
+    let key = derive_key(password, &salt_bytes);
+    let cipher = Aes256Gcm::new((&key).into());
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext.as_ref())
+        .map_err(|_| "Decryption failed (wrong password or corrupt data)")?;
+
+    serde_json::from_slice(&plaintext).map_err(|e| format!("Failed to parse decrypted vault: {e}"))
 }
 
 // Save vault data to file
-fn save_vault(path: &PathBuf, vault: &Vault) {
-    let json = serde_json::to_string_pretty(vault).expect("Failed to serialize vault");
+fn save_vault(path: &PathBuf, vault: &Vault, password: &str) {
+    let mut salt = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut salt);
+    let mut nonce_bytes = [0u8; 12];
+    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+
+    let key = derive_key(password, &salt);
+    let cipher = Aes256Gcm::new((&key).into());
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    let plaintext = serde_json::to_vec(vault).expect("Failed to serialize vault");
+    let ciphertext = cipher.encrypt(nonce, plaintext.as_ref()).expect("Encryption failed");
+
+    let encrypted = EncryptedVault {
+        salt: general_purpose::STANDARD.encode(salt),
+        nonce: general_purpose::STANDARD.encode(nonce_bytes),
+        ciphertext: general_purpose::STANDARD.encode(ciphertext),
+    };
+
+    let json = serde_json::to_string_pretty(&encrypted).expect("Failed to serialize encrypted vault");
     fs::write(path, json).expect("Failed to write vault file");
+}
+
+fn derive_key(password: &str, salt: &[u8]) -> [u8; 32] {
+    let argon2 = Argon2::default();
+    let mut output_key = [0u8; 32];
+    argon2
+        .hash_password_into(password.as_bytes(), salt, &mut output_key)
+        .expect("Failed to derive key");
+    output_key
 }
 
 // Get path to master password file (.master)
@@ -95,7 +150,7 @@ fn prompt_password(prompt: &str) -> String {
 }
 
 // Setup or verify master password
-fn authenticate() -> bool {
+fn authenticate() -> (bool, String) {
     let mp = master_path();
 
     if !mp.exists() {
@@ -111,25 +166,36 @@ fn authenticate() -> bool {
 
         if pw1 != pw2 {
             eprintln!("Passwords do not match. Exiting.");
-            return false;
+            return (false, String::new());
         }
         if pw1.is_empty() {
             eprintln!("Master password cannot be empty. Exiting.");
-            return false;
+            return (false, String::new());
         }
 
-        fs::write(&mp, &pw1).expect("Failed to save master password");
+        let salt = SaltString::generate(&mut rand::thread_rng());
+        let argon2 = Argon2::default();
+        let password_hash = argon2
+            .hash_password(pw1.as_bytes(), &salt)
+            .expect("Failed to hash password")
+            .to_string();
+
+        fs::write(&mp, password_hash).expect("Failed to save master password");
         println!("Master password set. You're all set!\n");
-        true
+        (true, pw1)
     } else {
-        let stored = fs::read_to_string(&mp).expect("Failed to read master password file");
+        let stored_hash = fs::read_to_string(&mp).expect("Failed to read master password file");
         let entered = prompt_password("Master password: ");
 
-        if entered == stored {
-            true
+        let parsed_hash = PasswordHash::new(&stored_hash).expect("Invalid stored password hash");
+        if Argon2::default()
+            .verify_password(entered.as_bytes(), &parsed_hash)
+            .is_ok()
+        {
+            (true, entered)
         } else {
             eprintln!("Incorrect master password. Access denied.");
-            false
+            (false, String::new())
         }
     }
 }
@@ -229,25 +295,36 @@ fn cmd_search(vault: &Vault, query: &str, out: &mut impl Write) {
 fn main() {
     let cli = Cli::parse();
 
-    if !authenticate() {
+    let (authenticated, password) = authenticate();
+    if !authenticated {
         std::process::exit(1);
     }
 
     let path = vault_path();
-    let mut vault = load_vault(&path);
+    let mut vault = if path.exists() {
+        let contents = fs::read_to_string(&path).expect("Failed to read vault file");
+        let encrypted: EncryptedVault = serde_json::from_str(&contents).expect("Corrupt vault format");
+        decrypt_vault(&encrypted, &password).unwrap_or_else(|e| {
+            eprintln!("Error decrypting vault: {e}");
+            std::process::exit(1);
+        })
+    } else {
+        Vault::default()
+    };
+
     let stdout = &mut io::stdout();
 
     match &cli.command {
         Commands::Add { service, username } => {
             cmd_add(&mut vault, service, username);
-            save_vault(&path, &vault);
+            save_vault(&path, &vault, &password);
         }
         Commands::Get { service } => {
             cmd_get(&vault, service, stdout);
         }
         Commands::Delete { service } => {
             cmd_delete(&mut vault, service, stdout);
-            save_vault(&path, &vault);
+            save_vault(&path, &vault, &password);
         }
         Commands::List => {
             cmd_list(&vault, stdout);
@@ -286,66 +363,23 @@ mod tests {
         String::from_utf8(buf).unwrap()
     }
 
-    // load_vault tests
-
-    #[test]
-    fn load_vault_nonexistent_file_returns_empty() {
-        let path = temp_path("nonexistent.json");
-        let vault = load_vault(&path);
-        assert!(vault.entries.is_empty());
-    }
-
-    #[test]
-    fn load_vault_valid_json_returns_entries() {
-        let path = temp_path("valid.json");
-        let json = r#"{"entries":{"github":{"service":"github","username":"alice","password":"s3cr3t"}}}"#;
-        fs::write(&path, json).unwrap();
-
-        let vault = load_vault(&path);
-        assert_eq!(vault.entries.len(), 1);
-        let e = &vault.entries["github"];
-        assert_eq!(e.service, "github");
-        assert_eq!(e.username, "alice");
-        assert_eq!(e.password, "s3cr3t");
-
-        fs::remove_file(&path).ok();
-    }
-
-    #[test]
-    fn load_vault_corrupt_json_returns_empty() {
-        let path = temp_path("corrupt.json");
-        fs::write(&path, b"not valid json at all!!!").unwrap();
-
-        let vault = load_vault(&path);
-        assert!(vault.entries.is_empty());
-
-        fs::remove_file(&path).ok();
-    }
-
-    #[test]
-    fn load_vault_empty_file_returns_empty() {
-        let path = temp_path("empty.json");
-        fs::write(&path, b"").unwrap();
-
-        let vault = load_vault(&path);
-        assert!(vault.entries.is_empty());
-
-        fs::remove_file(&path).ok();
-    }
-
     // save_vault tests
 
     #[test]
-    fn save_vault_creates_valid_json_file() {
+    fn save_vault_creates_encrypted_json_file() {
         let path = temp_path("save_test.json");
         let vault = vault_with(&[("github", "alice", "s3cr3t")]);
+        let password = "test_password";
 
-        save_vault(&path, &vault);
+        save_vault(&path, &vault, password);
 
         let contents = fs::read_to_string(&path).unwrap();
-        assert!(contents.contains("github"));
-        assert!(contents.contains("alice"));
-        assert!(contents.contains("s3cr3t"));
+        // Should NOT contain plaintext
+        assert!(!contents.contains("s3cr3t"));
+        // Should be valid JSON with encrypted fields
+        assert!(contents.contains("salt"));
+        assert!(contents.contains("nonce"));
+        assert!(contents.contains("ciphertext"));
 
         fs::remove_file(&path).ok();
     }
@@ -353,13 +387,17 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_correctly() {
         let path = temp_path("roundtrip.json");
+        let password = "password123";
         let original = vault_with(&[
             ("github", "alice", "pass1"),
             ("aws", "bob", "pass2"),
         ]);
 
-        save_vault(&path, &original);
-        let loaded = load_vault(&path);
+        save_vault(&path, &original, password);
+        
+        let contents = fs::read_to_string(&path).unwrap();
+        let encrypted: EncryptedVault = serde_json::from_str(&contents).unwrap();
+        let loaded = decrypt_vault(&encrypted, password).unwrap();
 
         assert_eq!(loaded.entries.len(), 2);
         assert_eq!(loaded.entries["github"].username, "alice");
@@ -369,14 +407,16 @@ mod tests {
     }
 
     #[test]
-    fn save_vault_empty_vault_produces_valid_json() {
-        let path = temp_path("empty_vault.json");
-        let vault = Vault::default();
+    fn decryption_fails_with_wrong_password() {
+        let path = temp_path("wrong_pass.json");
+        let vault = vault_with(&[("github", "alice", "pass")]);
+        save_vault(&path, &vault, "correct");
 
-        save_vault(&path, &vault);
-
-        let loaded = load_vault(&path);
-        assert!(loaded.entries.is_empty());
+        let contents = fs::read_to_string(&path).unwrap();
+        let encrypted: EncryptedVault = serde_json::from_str(&contents).unwrap();
+        
+        let result = decrypt_vault(&encrypted, "wrong");
+        assert!(result.is_err());
 
         fs::remove_file(&path).ok();
     }
