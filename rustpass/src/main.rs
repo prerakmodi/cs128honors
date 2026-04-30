@@ -8,7 +8,9 @@ use argon2::{
 };
 use base64::{engine::general_purpose, Engine as _};
 use clap::{Parser, Subcommand};
+use colored::*;
 use rand::RngCore;
+use rpassword::read_password;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -140,13 +142,12 @@ fn master_path() -> PathBuf {
     path
 }
 
-// Prompt user to enter a password
+// Prompt user to enter a value (echoed)
+// Prompt user to enter a password (hidden)
 fn prompt_password(prompt: &str) -> String {
     print!("{}", prompt);
     io::stdout().flush().expect("Failed to flush stdout");
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).expect("Failed to read input");
-    input.trim_end_matches(|c| c == '\n' || c == '\r').to_string()
+    read_password().expect("Failed to read password")
 }
 
 // Setup or verify master password
@@ -155,21 +156,21 @@ fn authenticate() -> (bool, String) {
 
     if !mp.exists() {
         // First-time setup
-        println!("═══════════════════════════════════════════");
-        println!("  Welcome to RustyVault! First-time setup  ");
-        println!("═══════════════════════════════════════════");
+        println!("{}", "═══════════════════════════════════════════".cyan());
+        println!("{}", "  Welcome to RustyVault! First-time setup  ".cyan().bold());
+        println!("{}", "═══════════════════════════════════════════".cyan());
         println!("Please create a master password.");
-        println!("(This protects access to all your entries.)");
+        println!("{}", "(This protects access to all your entries.)".italic().dimmed());
 
         let pw1 = prompt_password("New master password: ");
         let pw2 = prompt_password("Confirm master password: ");
 
         if pw1 != pw2 {
-            eprintln!("Passwords do not match. Exiting.");
+            eprintln!("{}", "Passwords do not match. Exiting.".red());
             return (false, String::new());
         }
         if pw1.is_empty() {
-            eprintln!("Master password cannot be empty. Exiting.");
+            eprintln!("{}", "Master password cannot be empty. Exiting.".red());
             return (false, String::new());
         }
 
@@ -181,11 +182,11 @@ fn authenticate() -> (bool, String) {
             .to_string();
 
         fs::write(&mp, password_hash).expect("Failed to save master password");
-        println!("Master password set. You're all set!\n");
+        println!("{}", "Master password set. You're all set!\n".green());
         (true, pw1)
     } else {
         let stored_hash = fs::read_to_string(&mp).expect("Failed to read master password file");
-        let entered = prompt_password("Master password: ");
+        let entered = prompt_password(&"Master password: ".bold().to_string());
 
         let parsed_hash = PasswordHash::new(&stored_hash).expect("Invalid stored password hash");
         if Argon2::default()
@@ -194,10 +195,15 @@ fn authenticate() -> (bool, String) {
         {
             (true, entered)
         } else {
-            eprintln!("Incorrect master password. Access denied.");
+            eprintln!("{}", "Incorrect master password. Access denied.".red());
+            false_delay(); // Anti-brute force delay
             (false, String::new())
         }
     }
+}
+
+fn false_delay() {
+    std::thread::sleep(std::time::Duration::from_secs(1));
 }
 
 // Insert or update an entry in the vault; returns true if it was a new entry
@@ -222,9 +228,9 @@ fn cmd_add(vault: &mut Vault, service: &str, username: &str) {
 
     let is_new = add_entry(vault, service, username, &password);
     if is_new {
-        println!("Entry for '{service}' added.");
+        println!("{}", format!("Entry for '{service}' added.").green());
     } else {
-        println!("Entry for '{service}' updated.");
+        println!("{}", format!("Entry for '{service}' updated.").green());
     }
 }
 
@@ -232,40 +238,40 @@ fn cmd_add(vault: &mut Vault, service: &str, username: &str) {
 fn cmd_get(vault: &Vault, service: &str, out: &mut impl Write) {
     match vault.entries.get(service) {
         Some(entry) => {
-            writeln!(out, "──────────────────────────────").unwrap();
-            writeln!(out, "  Service:  {}", entry.service).unwrap();
-            writeln!(out, "  Username: {}", entry.username).unwrap();
-            writeln!(out, "  Password: {}", entry.password).unwrap();
-            writeln!(out, "──────────────────────────────").unwrap();
+            writeln!(out, "{}", "──────────────────────────────".cyan()).unwrap();
+            writeln!(out, "  {}  {}", "Service:".bold(), entry.service.yellow()).unwrap();
+            writeln!(out, "  {}  {}", "Username:".bold(), entry.username).unwrap();
+            writeln!(out, "  {}  {}", "Password:".bold(), entry.password.green()).unwrap();
+            writeln!(out, "{}", "──────────────────────────────".cyan()).unwrap();
         }
-        None => eprintln!("No entry found for '{service}'."),
+        None => eprintln!("{}", format!("No entry found for '{service}'.").red()),
     }
 }
 
 // Delete a credential entry
 fn cmd_delete(vault: &mut Vault, service: &str, out: &mut impl Write) {
     if vault.entries.remove(service).is_some() {
-        writeln!(out, "Entry for '{service}' deleted.").unwrap();
+        writeln!(out, "{}", format!("Entry for '{service}' deleted.").green()).unwrap();
     } else {
-        eprintln!("No entry found for '{service}'.");
+        eprintln!("{}", format!("No entry found for '{service}'.").red());
     }
 }
 
 // List all stored services
 fn cmd_list(vault: &Vault, out: &mut impl Write) {
     if vault.entries.is_empty() {
-        writeln!(out, "No entries stored yet. Use `rustpass add` to get started.").unwrap();
+        writeln!(out, "{}", "No entries stored yet. Use `rustpass add` to get started.".dimmed()).unwrap();
         return;
     }
-    writeln!(out, "Stored services ({} total):", vault.entries.len()).unwrap();
-    writeln!(out, "──────────────────────────────").unwrap();
+    writeln!(out, "{}", format!("Stored services ({} total):", vault.entries.len()).bold().cyan()).unwrap();
+    writeln!(out, "{}", "──────────────────────────────".cyan()).unwrap();
     let mut services: Vec<&String> = vault.entries.keys().collect();
     services.sort();
     for s in services {
         let e = &vault.entries[s];
-        writeln!(out, "  {s}  (user: {})", e.username).unwrap();
+        writeln!(out, "  {}  {}", s.yellow().bold(), format!("(user: {})", e.username).dimmed()).unwrap();
     }
-    writeln!(out, "──────────────────────────────").unwrap();
+    writeln!(out, "{}", "──────────────────────────────".cyan()).unwrap();
 }
 
 // Search for services by name
@@ -278,17 +284,17 @@ fn cmd_search(vault: &Vault, query: &str, out: &mut impl Write) {
         .collect();
 
     if matches.is_empty() {
-        writeln!(out, "No entries matching '{query}'.").unwrap();
+        writeln!(out, "{}", format!("No entries matching '{query}'.").dimmed()).unwrap();
         return;
     }
-    writeln!(out, "Results for '{query}' ({} match(es)):", matches.len()).unwrap();
-    writeln!(out, "──────────────────────────────").unwrap();
+    writeln!(out, "{}", format!("Results for '{query}' ({} match(es)):", matches.len()).bold().cyan()).unwrap();
+    writeln!(out, "{}", "──────────────────────────────".cyan()).unwrap();
     let mut sorted = matches;
     sorted.sort_by(|a, b| a.service.cmp(&b.service));
     for e in sorted {
-        writeln!(out, "  {}  (user: {})", e.service, e.username).unwrap();
+        writeln!(out, "  {}  {}", e.service.yellow().bold(), format!("(user: {})", e.username).dimmed()).unwrap();
     }
-    writeln!(out, "──────────────────────────────").unwrap();
+    writeln!(out, "{}", "──────────────────────────────".cyan()).unwrap();
 }
 
 // Main entry point: parse CLI, authenticate, run command
@@ -297,7 +303,7 @@ fn main() {
 
     let (authenticated, password) = authenticate();
     if !authenticated {
-        std::process::exit(1);
+        std::process::exit(0);
     }
 
     let path = vault_path();
@@ -305,7 +311,7 @@ fn main() {
         let contents = fs::read_to_string(&path).expect("Failed to read vault file");
         let encrypted: EncryptedVault = serde_json::from_str(&contents).expect("Corrupt vault format");
         decrypt_vault(&encrypted, &password).unwrap_or_else(|e| {
-            eprintln!("Error decrypting vault: {e}");
+            eprintln!("{}", format!("Error decrypting vault: {e}").red());
             std::process::exit(1);
         })
     } else {
