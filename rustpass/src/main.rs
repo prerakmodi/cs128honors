@@ -344,6 +344,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose;
     use std::path::PathBuf;
     use std::fs;
 
@@ -423,6 +424,192 @@ mod tests {
         
         let result = decrypt_vault(&encrypted, "wrong");
         assert!(result.is_err());
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn save_vault_does_not_store_plaintext_service_names() {
+        let path = temp_path("no_plaintext_service.json");
+        let vault = vault_with(&[("supersecretservice", "alice", "pass")]);
+
+        save_vault(&path, &vault, "password");
+
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(!contents.contains("supersecretservice"));
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn save_vault_does_not_store_plaintext_usernames() {
+        let path = temp_path("no_plaintext_user.json");
+        let vault = vault_with(&[("github", "supersecretuser", "pass")]);
+
+        save_vault(&path, &vault, "password");
+
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(!contents.contains("supersecretuser"));
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn save_vault_two_saves_produce_different_ciphertexts() {
+        let path1 = temp_path("cipher1.json");
+        let path2 = temp_path("cipher2.json");
+        let vault = vault_with(&[("github", "alice", "pass")]);
+
+        save_vault(&path1, &vault, "password");
+        save_vault(&path2, &vault, "password");
+
+        let c1 = fs::read_to_string(&path1).unwrap();
+        let c2 = fs::read_to_string(&path2).unwrap();
+        assert_ne!(c1, c2);
+
+        fs::remove_file(&path1).ok();
+        fs::remove_file(&path2).ok();
+    }
+
+    #[test]
+    fn save_vault_empty_vault_round_trips_correctly() {
+        let path = temp_path("empty_roundtrip.json");
+        let vault = Vault::default();
+
+        save_vault(&path, &vault, "password");
+
+        let contents = fs::read_to_string(&path).unwrap();
+        let encrypted: EncryptedVault = serde_json::from_str(&contents).unwrap();
+        let loaded = decrypt_vault(&encrypted, "password").unwrap();
+        assert!(loaded.entries.is_empty());
+
+        fs::remove_file(&path).ok();
+    }
+
+    // derive_key tests
+
+    #[test]
+    fn derive_key_same_inputs_produce_same_key() {
+        let salt = [1u8; 16];
+        let key1 = derive_key("password", &salt);
+        let key2 = derive_key("password", &salt);
+        assert_eq!(key1, key2);
+    }
+
+    #[test]
+    fn derive_key_different_passwords_produce_different_keys() {
+        let salt = [1u8; 16];
+        let key1 = derive_key("password1", &salt);
+        let key2 = derive_key("password2", &salt);
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn derive_key_different_salts_produce_different_keys() {
+        let key1 = derive_key("password", &[1u8; 16]);
+        let key2 = derive_key("password", &[2u8; 16]);
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn derive_key_output_is_32_bytes() {
+        let key = derive_key("password", &[0u8; 16]);
+        assert_eq!(key.len(), 32);
+    }
+
+    #[test]
+    fn derive_key_empty_password_produces_valid_key() {
+        let key = derive_key("", &[0u8; 16]);
+        assert_eq!(key.len(), 32);
+    }
+
+    // decrypt_vault tests
+
+    #[test]
+    fn decrypt_vault_correct_password_returns_all_fields() {
+        let path = temp_path("decrypt_fields.json");
+        let vault = vault_with(&[("github", "alice", "s3cr3t")]);
+        save_vault(&path, &vault, "masterpass");
+
+        let contents = fs::read_to_string(&path).unwrap();
+        let encrypted: EncryptedVault = serde_json::from_str(&contents).unwrap();
+        let decrypted = decrypt_vault(&encrypted, "masterpass").unwrap();
+
+        assert_eq!(decrypted.entries["github"].service, "github");
+        assert_eq!(decrypted.entries["github"].username, "alice");
+        assert_eq!(decrypted.entries["github"].password, "s3cr3t");
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn decrypt_vault_multiple_entries_all_preserved() {
+        let path = temp_path("multi_entries.json");
+        let vault = vault_with(&[
+            ("github", "alice", "pass1"),
+            ("aws", "bob", "pass2"),
+            ("gmail", "charlie", "pass3"),
+        ]);
+        save_vault(&path, &vault, "masterpass");
+
+        let contents = fs::read_to_string(&path).unwrap();
+        let encrypted: EncryptedVault = serde_json::from_str(&contents).unwrap();
+        let decrypted = decrypt_vault(&encrypted, "masterpass").unwrap();
+
+        assert_eq!(decrypted.entries.len(), 3);
+        assert_eq!(decrypted.entries["github"].password, "pass1");
+        assert_eq!(decrypted.entries["aws"].password, "pass2");
+        assert_eq!(decrypted.entries["gmail"].password, "pass3");
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn decrypt_vault_invalid_base64_salt_returns_err() {
+        let encrypted = EncryptedVault {
+            salt: "not!!valid!!base64".to_string(),
+            nonce: general_purpose::STANDARD.encode([0u8; 12]),
+            ciphertext: general_purpose::STANDARD.encode([0u8; 16]),
+        };
+        assert!(decrypt_vault(&encrypted, "password").is_err());
+    }
+
+    #[test]
+    fn decrypt_vault_invalid_base64_nonce_returns_err() {
+        let encrypted = EncryptedVault {
+            salt: general_purpose::STANDARD.encode([0u8; 16]),
+            nonce: "not!!valid!!base64".to_string(),
+            ciphertext: general_purpose::STANDARD.encode([0u8; 16]),
+        };
+        assert!(decrypt_vault(&encrypted, "password").is_err());
+    }
+
+    #[test]
+    fn decrypt_vault_invalid_base64_ciphertext_returns_err() {
+        let encrypted = EncryptedVault {
+            salt: general_purpose::STANDARD.encode([0u8; 16]),
+            nonce: general_purpose::STANDARD.encode([0u8; 12]),
+            ciphertext: "not!!valid!!base64".to_string(),
+        };
+        assert!(decrypt_vault(&encrypted, "password").is_err());
+    }
+
+    #[test]
+    fn decrypt_vault_tampered_ciphertext_returns_err() {
+        let path = temp_path("tampered.json");
+        let vault = vault_with(&[("github", "alice", "pass")]);
+        save_vault(&path, &vault, "password");
+
+        let contents = fs::read_to_string(&path).unwrap();
+        let mut encrypted: EncryptedVault = serde_json::from_str(&contents).unwrap();
+
+        let mut bytes = general_purpose::STANDARD.decode(&encrypted.ciphertext).unwrap();
+        if let Some(b) = bytes.first_mut() {
+            *b ^= 0xFF;
+        }
+        encrypted.ciphertext = general_purpose::STANDARD.encode(bytes);
+
+        assert!(decrypt_vault(&encrypted, "password").is_err());
 
         fs::remove_file(&path).ok();
     }
